@@ -1,0 +1,430 @@
+--========================================================
+-- AUTO OPEN BOX + DISCORD WEBHOOK
+-- Mở box mỗi 10 giây
+-- Chỉ gửi webhook khi: Godly / Legendary
+-- Thêm: tên account + image item
+-- Tự dừng phiên bản cũ
+--========================================================
+
+--========================================================
+-- STOP BẢN CŨ
+--========================================================
+
+pcall(function()
+    if _G.AutoBoxWebhook_Stop then
+        _G.AutoBoxWebhook_Stop()
+    end
+end)
+
+local stopped = false
+
+_G.AutoBoxWebhook_Stop = function()
+    stopped = true
+end
+
+--========================================================
+-- CONFIG
+--========================================================
+
+local BOX_ID = "Halloween2026Box"
+
+-- "Auto" = tự chọn currency theo box
+-- Hoặc:
+-- "Coins"
+-- "Gems"
+-- "Key"
+-- "SummerKey2026"
+
+local CURRENCY = "Candies2026"
+
+local OPEN_INTERVAL = 10
+
+-- Dán Discord Webhook URL vào đây
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1266886420614742117/U7VVy7UyS7iM1gsuX80DpiE1j7gcfKCZdh707h6Y-EHJ2nTXRqhySVXHaxjVZy4idh76"
+
+-- Chỉ gửi khi rarity là 2 loại này
+local SEND_RARITIES = {
+    Godly = true
+
+}
+
+--========================================================
+-- SERVICES
+--========================================================
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+
+local LocalPlayer = Players.LocalPlayer
+
+local Database =
+    ReplicatedStorage:WaitForChild("Database")
+
+local Sync =
+    require(Database:WaitForChild("Sync"))
+
+local Shop =
+    ReplicatedStorage
+        :WaitForChild("Remotes")
+        :WaitForChild("Shop")
+
+local OpenCrate =
+    Shop:WaitForChild("OpenCrate")
+
+--========================================================
+-- REQUEST FUNCTION
+--========================================================
+
+local requestFunction =
+    request
+    or http_request
+    or (syn and syn.request)
+    or (http and http.request)
+
+local function sendRequest(options)
+
+    if not requestFunction then
+        return false, "Executor không hỗ trợ HTTP request"
+    end
+
+    local ok, result = pcall(function()
+        return requestFunction(options)
+    end)
+
+    if not ok then
+        return false, result
+    end
+
+    return true, result
+end
+
+--========================================================
+-- CHỌN CURRENCY
+--========================================================
+
+local function getCurrency(boxId)
+
+    if CURRENCY ~= "Auto" then
+        return CURRENCY
+    end
+
+    local newShop = Sync.NewShop
+
+    if type(newShop) ~= "table" then
+        return "Coins"
+    end
+
+    local boxData = newShop[boxId]
+
+    if type(boxData) ~= "table" then
+        return "Coins"
+    end
+
+    local price = boxData.Price
+
+    if type(price) ~= "table" then
+        return "Coins"
+    end
+
+    -- Ưu tiên Coins
+    if price.Coins ~= nil then
+        return "Coins"
+    end
+
+    -- Sau đó Gems
+    if price.Gems ~= nil then
+        return "Gems"
+    end
+
+    -- Sau đó Key
+    if price.Key ~= nil then
+        return "Key"
+    end
+
+    -- Event key
+    if price.SummerKey2026 ~= nil then
+        return "SummerKey2026"
+    end
+
+    -- Fallback
+    for currency in pairs(price) do
+        return currency
+    end
+
+    return "Coins"
+end
+
+local CURRENCY_TO_USE =
+    getCurrency(BOX_ID)
+
+--========================================================
+-- WEBHOOK
+--========================================================
+
+local function sendWebhook(itemKey, itemData)
+
+    if WEBHOOK_URL == ""
+    or WEBHOOK_URL == "YOUR_DISCORD_WEBHOOK_URL" then
+
+        warn("[AutoBox] Chưa cấu hình WEBHOOK_URL")
+        return
+    end
+
+    local rarity =
+        tostring(itemData.Rarity or "Unknown")
+
+    local itemName =
+        tostring(itemData.ItemName or itemKey)
+
+    local itemType =
+        tostring(itemData.ItemType or "Unknown")
+
+    local image =
+        tostring(itemData.Image or "")
+
+    -- Username Roblox
+    local accountName =
+        LocalPlayer.Name
+
+    -- Display Name Roblox
+    local displayName =
+        LocalPlayer.DisplayName
+
+    local isChroma =
+        itemData.Chroma == true
+
+    local description =
+        "🎁 **Rare Box Drop Detected**"
+
+    if isChroma then
+        description =
+            description ..
+            "\n✨ Chroma: **YES**"
+    end
+
+    local payload = {
+        username = "Roblox Box Monitor",
+
+        embeds = {{
+            title = "🎉 " .. rarity .. " DROP!",
+            description = description,
+
+            fields = {
+
+                {
+                    name = "👤 Account",
+                    value =
+                        "**" .. displayName ..
+                        "**\n`" .. accountName .. "`",
+                    inline = true
+                },
+
+                {
+                    name = "🎁 Item",
+                    value = "`" .. itemName .. "`",
+                    inline = true
+                },
+
+                {
+                    name = "⭐ Rarity",
+                    value = "`" .. rarity .. "`",
+                    inline = true
+                },
+
+                {
+                    name = "📦 Box",
+                    value = "`" .. BOX_ID .. "`",
+                    inline = true
+                },
+
+                {
+                    name = "🆔 Item Key",
+                    value = "`" .. itemKey .. "`",
+                    inline = false
+                },
+
+                {
+                    name = "🔫 Type",
+                    value = "`" .. itemType .. "`",
+                    inline = true
+                },
+
+                {
+                    name = "💰 Currency",
+                    value = "`" .. CURRENCY_TO_USE .. "`",
+                    inline = true
+                }
+            },
+
+            -- Ảnh item
+            thumbnail = {
+                url = image
+            },
+
+            footer = {
+                text = "Roblox Box Monitor"
+            },
+
+            timestamp = DateTime.now():ToIsoDate()
+        }}
+    }
+
+    local success, body = pcall(function()
+        return HttpService:JSONEncode(payload)
+    end)
+
+    if not success then
+        warn(
+            "[AutoBox] JSON encode failed:",
+            body
+        )
+        return
+    end
+
+    local ok, response =
+        sendRequest({
+            Url = WEBHOOK_URL,
+
+            Method = "POST",
+
+            Headers = {
+                ["Content-Type"] = "application/json"
+            },
+
+            Body = body
+        })
+
+    if ok then
+
+        print(
+            "[AutoBox] Webhook sent:",
+            itemName,
+            rarity,
+            "Account:",
+            accountName
+        )
+
+    else
+
+        warn(
+            "[AutoBox] Webhook failed:",
+            response
+        )
+
+    end
+end
+
+--========================================================
+-- OPEN BOX
+--========================================================
+
+local function openBox()
+
+    if stopped then
+        return
+    end
+
+    local success, result = pcall(function()
+
+        return OpenCrate:InvokeServer(
+            BOX_ID,
+            "MysteryBox",
+            CURRENCY_TO_USE
+        )
+
+    end)
+
+    if not success then
+
+        warn(
+            "[AutoBox] OpenCrate error:",
+            result
+        )
+
+        return
+    end
+
+    local itemKey =
+        tostring(result)
+
+    local itemData =
+        Sync.Item[itemKey]
+
+    if not itemData then
+
+        warn(
+            "[AutoBox] Không tìm thấy Sync.Item:",
+            itemKey
+        )
+
+        return
+    end
+
+    local itemName =
+        tostring(
+            itemData.ItemName
+            or itemKey
+        )
+
+    local rarity =
+        tostring(
+            itemData.Rarity
+            or "Unknown"
+        )
+
+    local chroma =
+        itemData.Chroma == true
+
+    print(
+        "[AutoBox]",
+        "Item:", itemName,
+        "| Key:", itemKey,
+        "| Rarity:", rarity,
+        "| Chroma:", chroma
+    )
+
+    --====================================================
+    -- CHỈ WEBHOOK GODLY / LEGENDARY
+    --====================================================
+
+    if SEND_RARITIES[rarity] then
+
+        sendWebhook(
+            itemKey,
+            itemData
+        )
+
+    end
+end
+
+--========================================================
+-- START
+--========================================================
+
+print("================================================")
+print("[AutoBox] START")
+print("Box      :", BOX_ID)
+print("Currency :", CURRENCY_TO_USE)
+print("Interval :", OPEN_INTERVAL, "seconds")
+print(
+    "Webhook  :",
+    WEBHOOK_URL ~= "YOUR_DISCORD_WEBHOOK_URL"
+)
+print("================================================")
+
+while not stopped do
+
+    openBox()
+
+    local start = os.clock()
+
+    while not stopped
+    and os.clock() - start < OPEN_INTERVAL do
+
+        task.wait(0.2)
+
+    end
+end
+
+print("[AutoBox] Đã dừng.")
